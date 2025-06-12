@@ -1,13 +1,12 @@
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
-from models import StatusEnum, BroadcastStatusEnum
 
 class AdBase(BaseModel):
     brand: str
     advertisement: str
     duration: int 
-    status: StatusEnum
+    status: str 
 
 class AdCreate(AdBase):
     pass
@@ -21,8 +20,9 @@ class AdOut(AdBase):
 class BroadcastBase(BaseModel):
     radio_station: str
     broadcast_recording: str
+    filename: str
     duration: int
-    status: BroadcastStatusEnum
+    status: str
 
 class BroadcastCreate(BroadcastBase):
     pass
