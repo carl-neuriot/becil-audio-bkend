@@ -1,21 +1,26 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+
 
 class AdBase(BaseModel):
     brand: str
     advertisement: str
-    duration: int 
-    status: str 
+    filename: str
+    duration: int
+    status: str
+
 
 class AdCreate(AdBase):
     pass
 
+
 class AdOut(AdBase):
     id: int
     upload_date: datetime
+
     class Config:
         orm_mode = True
+
 
 class BroadcastBase(BaseModel):
     radio_station: str
@@ -24,11 +29,14 @@ class BroadcastBase(BaseModel):
     duration: int
     status: str
 
+
 class BroadcastCreate(BroadcastBase):
     pass
+
 
 class BroadcastOut(BroadcastBase):
     id: int
     broadcast_date: datetime
+
     class Config:
         orm_mode = True

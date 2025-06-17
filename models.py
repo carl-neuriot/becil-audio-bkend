@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, DateTime
 from database import Base
 from datetime import datetime
 
+
 class Ad(Base):
     __tablename__ = "ads"
     id = Column(Integer, primary_key=True, index=True)
@@ -9,6 +10,8 @@ class Ad(Base):
     advertisement = Column(String(255), nullable=False)
     duration = Column(Integer)
     upload_date = Column(DateTime, default=datetime.utcnow)
+    duration = Column(Integer)
+    filename = Column(String(255))
     status = Column(String(8))  # Stored as VARCHAR(8) in SQLite
 
 
@@ -21,6 +24,7 @@ class Broadcast(Base):
     filename = Column(String(255))
     broadcast_date = Column(DateTime, default=datetime.utcnow)
     status = Column(String(9))  # Stored as VARCHAR(9) in SQLite
+
 
 class AdDetectionResult(Base):
     __tablename__ = "ad_detection_results"

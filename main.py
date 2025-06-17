@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import ads, broadcasts
+from routes import ads, broadcasts, audio
 from database import Base, engine
 
 Base.metadata.create_all(bind=engine)
@@ -17,3 +17,4 @@ app.add_middleware(
 
 app.include_router(ads.router, prefix="/api")
 app.include_router(broadcasts.router, prefix="/api")
+app.include_router(audio.router, prefix="/api")

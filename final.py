@@ -8,20 +8,17 @@ from scipy.signal import correlate
 import os
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.io import wavfile
 from scipy import signal
 from datetime import timedelta, datetime
 import librosa
 import librosa.display
-import soundfile as sf
 from sklearn.preprocessing import normalize
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, LargeBinary, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-import sqlite3
 from io import BytesIO
-import base64
+from fastapi.responses import StreamingResponse
 
 # Database setup
 Base = declarative_base()
@@ -76,7 +73,7 @@ class Ads(Base):
     advertisement = Column(String(255), nullable=False)  # File path or name
     duration = Column(Integer, nullable=True)  # Duration in seconds
     upload_date = Column(DateTime, default=datetime.now)
-    status = Column(String(8), default='active')
+    status = Column(String(8), default='Active')
 
     # Relationship
     detection_results = relationship("AdDetectionResult", back_populates="ad")
@@ -310,7 +307,7 @@ class EnhancedRadioRecordingManager:
                         # Update existing record
                         existing_ad.brand = brand_name
                         existing_ad.duration = duration_seconds
-                        existing_ad.status = 'active'
+                        existing_ad.status = 'Active'
                         updated_count += 1
                     else:
                         # Add new record
@@ -318,7 +315,7 @@ class EnhancedRadioRecordingManager:
                             brand=brand_name,
                             advertisement=filename,
                             duration=duration_seconds,
-                            status='active'
+                            status='Active'
                         )
                         session.add(new_ad)
                         added_count += 1
@@ -713,25 +710,25 @@ class EnhancedRadioRecordingManager:
         finally:
             session.close()
 
-    def download_excel_by_filename(self, radio_filename, save_path=None):
+    def download_excel_by_id(self, broadcast_id, save_path=None):
         """Download Excel file from database by radio filename"""
         session = self.Session()
         try:
             # Get broadcast ID first
             broadcast = session.query(Broadcasts).filter(
-                Broadcasts.broadcast_recording == radio_filename
+                Broadcasts.id == broadcast_id
             ).first()
 
             if not broadcast:
-                print(f"No broadcast found for: {radio_filename}")
+                print(f"No broadcast found for: {broadcast_id}")
                 return None
 
             excel_record = session.query(ExcelReports).filter(
-                ExcelReports.broadcast_id == broadcast.id
+                ExcelReports.broadcast_id == broadcast_id
             ).first()
 
             if not excel_record:
-                print(f"No Excel report found for: {radio_filename}")
+                print(f"No Excel report found for: {broadcast_id}")
                 return None
 
             if save_path is None:
@@ -749,6 +746,44 @@ class EnhancedRadioRecordingManager:
 
         except Exception as e:
             print(f" Error downloading Excel: {e}")
+            return None
+        finally:
+            session.close()
+
+
+    def stream_excel_report(self, broadcast_id):
+        """Return Excel file as a FastAPI StreamingResponse"""
+        session = self.Session()
+        try:
+            broadcast = session.query(Broadcasts).filter(
+                Broadcasts.id == broadcast_id
+            ).first()
+
+            if not broadcast:
+                print(f"No broadcast found for: {broadcast_id}")
+                return None
+
+            excel_record = session.query(ExcelReports).filter(
+                ExcelReports.broadcast_id == broadcast_id
+            ).first()
+
+            if not excel_record:
+                print(f"No Excel report found for: {broadcast_id}")
+                return None
+
+            file_stream = BytesIO(excel_record.excel_data)
+            filename = excel_record.excel_filename or f"Report_{broadcast.broadcast_recording}.xlsx"
+
+            return StreamingResponse(
+                file_stream,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}"
+                }
+            )
+
+        except Exception as e:
+            print(f" Error streaming Excel: {e}")
             return None
         finally:
             session.close()
@@ -1018,10 +1053,10 @@ def update_ads_database(ad_masters_folder="ad_masters"):
 # Convenience functions for database access
 
 
-def fetch_excel_report(radio_filename, download_path=None):
+def fetch_excel_report(broadcast_id, download_path=None):
     """Fetch Excel report from database by radio filename"""
     db_manager = EnhancedRadioRecordingManager()
-    return db_manager.download_excel_by_filename(radio_filename, download_path)
+    return db_manager.stream_excel_report(broadcast_id)
 
 
 def list_all_reports():

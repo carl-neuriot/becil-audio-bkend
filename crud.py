@@ -4,8 +4,6 @@ from models import Ad, Broadcast
 import schemas
 
 # Ads
-
-
 def create_ad(db: Session, ad: schemas.AdCreate):
     # This is fine because Pydantic Enums cast to strings
     db_ad = Ad(**ad.dict())
@@ -30,9 +28,15 @@ def delete_ad(db: Session, ad_id: int):
         db.commit()
     return db_ad
 
+def set_ad_status(db: Session, ad_id: int, status: str):
+    ad = get_ad(db, ad_id)
+    if ad:
+        ad.status = status
+        db.commit()
+        db.refresh(ad)
+    return ad
+
 # Broadcasts
-
-
 def create_broadcast(db: Session, broadcast: schemas.BroadcastCreate):
     db_bc = Broadcast(**broadcast.dict())  # Same here: enums become strings
     db.add(db_bc)
