@@ -44,3 +44,4 @@ class AdDetectionResult(Base):
     total_matches_found = Column(Integer)
     ad_id = Column(Integer, nullable=False)
     broadcast_id = Column(Integer, nullable=False)
+    clip_type = Column(String(24), nullable=True) 

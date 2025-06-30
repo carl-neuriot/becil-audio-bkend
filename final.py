@@ -19,6 +19,11 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from io import BytesIO
 from fastapi.responses import StreamingResponse
+import soundfile as sf
+from pydub import AudioSegment
+import io
+from pathlib import Path
+
 
 # Database setup
 Base = declarative_base()
@@ -40,6 +45,7 @@ class AdDetectionResult(Base):
     detection_timestamp = Column(DateTime, default=datetime.now)
     processing_status = Column(String(50), default='completed')
     total_matches_found = Column(Integer, default=0)
+    clip_type = Column(String(24), nullable=True) 
     ad_id = Column(Integer, ForeignKey('ads.id'), nullable=False, default=-1)
     broadcast_id = Column(Integer, ForeignKey(
         'broadcasts.id'), nullable=False, default=-1)
@@ -95,6 +101,18 @@ class Broadcasts(Base):
         "AdDetectionResult", back_populates="broadcast")
     excel_reports = relationship(
         "ExcelReports", back_populates="broadcast")  # ADDED
+
+class Songs(Base):
+    __tablename__ = 'songs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    artist = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=False)
+    filename = Column(String(255), nullable=False)
+    duration = Column(Integer, nullable=True)  # Duration in seconds
+    upload_date = Column(DateTime, default=datetime.now)
+    status = Column(String(8), default='Active')
+
 
 # Your existing utility functions (keeping them as they are)
 
@@ -750,7 +768,6 @@ class EnhancedRadioRecordingManager:
         finally:
             session.close()
 
-
     def stream_excel_report(self, broadcast_id):
         """Return Excel file as a FastAPI StreamingResponse"""
         session = self.Session()
@@ -897,6 +914,230 @@ class EnhancedRadioRecordingManager:
         finally:
             session.close()
 
+    def extract_clip_from_broadcast(self, broadcast_id, brand_or_artist, advertisement_or_name, 
+                               clip_type, start_time, end_time, ad_masters_folder="ad_masters", 
+                               songs_folder="songs"):
+        """
+    Extract a clip from a broadcast and save/store based on type
+    
+    Parameters:
+    - broadcast_id: ID of the broadcast in database
+    - brand_or_artist: Brand name (for ads) or Artist name (for songs)  
+    - advertisement_or_name: Ad description or Song name
+    - clip_type: 'ad', 'song', or 'speech'
+    - start_time: Start time in seconds
+    - end_time: End time in seconds
+    - ad_masters_folder: Folder to save ad clips
+    - songs_folder: Folder to save song clips
+        """
+    
+        session = self.Session()
+        try:
+        # Get broadcast information
+            broadcast = session.query(Broadcasts).filter(
+                Broadcasts.id == broadcast_id
+            ).first()
+        
+            if not broadcast:
+                print(f" Broadcast with ID {broadcast_id} not found")
+                return False
+            
+            broadcast_file = broadcast.broadcast_recording
+            print(f" Processing broadcast: {broadcast_file}")
+        
+            if clip_type.lower() == 'speech':
+                print(" Speech type detected - inserting directly to database")
+            
+                speech_result = AdDetectionResult(
+                    brand="Speech",
+                    description="",
+                    start_time_seconds=float(start_time),
+                    end_time_seconds=float(end_time),
+                    duration_seconds=float(end_time - start_time),
+                    correlation_score=1.0,  # Default score for manually added speech
+                    raw_correlation=1.0,
+                    mfcc_correlation=1.0,
+                    overlap_duration=float(end_time - start_time),
+                    total_matches_found=1,
+                    ad_id=-1,  # No corresponding ad file
+                    broadcast_id=broadcast_id,
+                    processing_status='manual_entry',
+                    clip_type='speech'  
+
+                )
+            
+                session.add(speech_result)
+                session.commit()
+                print(f" Speech entry added to detection results")
+                return True
+            
+        # For ads and songs, we need to extract audio
+        # Find the broadcast file
+
+            radio_file_path = get_first_file_path("radio_recording")
+        #     broadcast_path = None
+        #     possible_paths = [
+        #         broadcast_file,  
+        #         os.path.join("radio_recording", broadcast_file),  # In radio_recording folder
+        #         os.path.join("broadcasts", broadcast_file),  # In broadcasts folder
+        #     ]
+        # 
+        #     for path in possible_paths:
+        #         if os.path.exists(path):
+        #             broadcast_path = path
+        #             break
+        #         
+        #     if not broadcast_path:
+        #         print(f" Broadcast file not found: {broadcast_file}")
+        #         return False
+        #     
+        #     print(f"🎵 Loading broadcast audio from: {broadcast_path}")
+        # 
+        # Load the broadcast audio
+            broadcast_audio, broadcast_sr = load_audio(radio_file_path)
+            if broadcast_audio is None:
+                print(f" Failed to load broadcast audio")
+                return False
+            else:
+                print("Loaded audio file")
+            
+        # Calculate sample indices for extraction
+            start_sample = int(start_time * broadcast_sr)
+            end_sample = int(end_time * broadcast_sr)
+        
+        # Validate indices
+            if start_sample < 0 or end_sample > len(broadcast_audio) or start_sample >= end_sample:
+                print(f" Invalid time range: {start_time}s to {end_time}s")
+                print(f"   Broadcast duration: {len(broadcast_audio)/broadcast_sr:.2f}s")
+                return False
+            
+        # Extract the audio clip
+            extracted_clip = broadcast_audio[start_sample:end_sample]
+            duration = len(extracted_clip) / broadcast_sr
+        
+            print(f" Extracted clip: {duration:.2f}s ({start_time}s - {end_time}s)")
+        
+        # Generate filename based on type
+            if clip_type.lower() == 'ad':
+            # Create ad filename: Brand_Description_duration.wav
+                safe_brand = "".join(c for c in brand_or_artist if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_desc = "".join(c for c in advertisement_or_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                filename = f"{safe_brand}_{safe_desc}.mp3"
+                output_folder = ad_masters_folder
+            
+            elif clip_type.lower() == 'song':
+            # Create song filename: Artist_SongName_duration.wav  
+                safe_artist = "".join(c for c in brand_or_artist if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_song = "".join(c for c in advertisement_or_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                filename = f"{safe_artist}_{safe_song}.mp3"
+                output_folder = songs_folder
+            
+            else:
+                print(f" Invalid clip type: {clip_type}. Use 'ad', 'song', or 'speech'")
+                return False
+            
+        # Create output directory if it doesn't exist
+            os.makedirs(output_folder, exist_ok=True)
+            output_path = os.path.join(output_folder, filename)
+        
+        # Save the extracted clip
+            try:
+    # Convert numpy array to AudioSegment
+    # First save as temporary WAV in memory
+                temp_wav = io.BytesIO()
+                sf.write(temp_wav, extracted_clip, broadcast_sr, format='WAV')
+                temp_wav.seek(0)
+    
+    # Load into pydub and export as MP3
+                audio_segment = AudioSegment.from_wav(temp_wav)
+                audio_segment.export(output_path, format="mp3", bitrate="192k")
+                print(f" Saved {clip_type} clip: {output_path}")
+            except Exception as e:
+                print(f" Error saving audio file: {e}")
+                return False
+            
+        # Add to appropriate database table
+            if clip_type.lower() == 'ad':
+            # Add to ads table
+                new_ad = Ads(
+                    brand=brand_or_artist,
+                    advertisement=filename,
+                    duration=int(duration),
+                    status='Active'
+                )
+                session.add(new_ad)
+                session.commit()
+            
+            # Get the new ad ID
+                ad_id = new_ad.id
+                print(f" Added to ads table (ID: {ad_id})")
+            
+            # Also add to detection results to show it was found in this broadcast
+                detection_result = AdDetectionResult(
+                    brand=brand_or_artist,
+                    description=advertisement_or_name,
+                    start_time_seconds=float(start_time),
+                    end_time_seconds=float(end_time), 
+                    duration_seconds=duration,
+                    correlation_score=1.0,  # Perfect score for manually extracted
+                    raw_correlation=1.0,
+                    mfcc_correlation=1.0,
+                    overlap_duration=duration,
+                    total_matches_found=1,
+                    ad_id=ad_id,
+                    broadcast_id=broadcast_id,
+                    processing_status='manual_extraction',
+                    clip_type='ad'  
+
+                )
+                session.add(detection_result)
+            
+            elif clip_type.lower() == 'song':
+            # Add to songs table (assuming you want to track songs similarly)
+                new_song = Songs(
+                    artist=brand_or_artist,
+                    name=advertisement_or_name,
+                    filename=filename,
+                    duration=int(duration),
+                    upload_date=datetime.now(),
+                    status='Active'
+                )
+                session.add(new_song)
+                session.commit()
+                song_id = new_song.id
+                print(f" Added to songs table: {filename}")
+                song_detection_result = AdDetectionResult(
+                    brand=brand_or_artist,
+                    description=advertisement_or_name,
+                    start_time_seconds=float(start_time),
+                    end_time_seconds=float(end_time),
+                    duration_seconds=duration,
+                    correlation_score=1.0,
+                    raw_correlation=1.0,
+                    mfcc_correlation=1.0,
+                    overlap_duration=duration,
+                    total_matches_found=1,
+                    ad_id=song_id,
+                    broadcast_id=broadcast_id,
+                    processing_status='manual_extraction',
+                    clip_type='song'  
+                )
+                session.add(song_detection_result)
+            session.commit()
+        
+            print(f" Successfully processed {clip_type}: {filename}")
+            print(f"    Saved to: {output_folder}")
+            print(f"    Duration: {duration:.2f}s")
+            print(f"    Linked to broadcast ID: {broadcast_id}")
+        
+            return True
+        
+        except Exception as e:
+            session.rollback()
+            print(f" Error extracting clip: {e}")
+            return False
+        finally:
+            session.close()
 
 # In[27]:
 def get_first_file_path(folder_path: str) -> str | None:
@@ -1131,8 +1372,48 @@ def download_report_by_radio_name(radio_filename, save_folder="downloads"):
         save_folder, f"report_{radio_filename.replace('.mp3', '').replace('.wav', '')}.xlsx")
     return fetch_excel_report(radio_filename, save_path)
 
+
+def extract_clip(broadcast_id, brand_or_artist, advertisement_or_name, 
+                                     clip_type, start_time, end_time):
+    """
+    Simple wrapper function to extract clips
+    
+    Example usage:
+    extract_clip(
+        broadcast_id=1,
+        brand_or_artist="CocaCola", 
+        advertisement_or_name="Summer Campaign 2024",
+        clip_type="ad",
+        start_time=120.5,
+        end_time=150.8
+    )
+    """
+    db_manager = EnhancedRadioRecordingManager()
+    return db_manager.extract_clip_from_broadcast(
+        broadcast_id, brand_or_artist, advertisement_or_name, 
+        clip_type, start_time, end_time
+    )
 # COMPREHENSIVE DATABASE OVERVIEW FUNCTION
 
+def show_broadcasts_for_extraction():
+    """Show all broadcasts available for clip extraction"""
+    db_manager = EnhancedRadioRecordingManager()
+    broadcasts = db_manager.get_all_broadcasts()
+    
+    if not broadcasts:
+        print("No broadcasts available for extraction")
+        return
+        
+    print("\n🎵 Available Broadcasts for Clip Extraction:")
+    print("=" * 60)
+    for broadcast in broadcasts:
+        duration_str = broadcast['duration_str'] if broadcast['duration'] else "Unknown"
+        print(f"ID: {broadcast['id']} | {broadcast['broadcast_recording']}")
+        print(f"    Duration: {duration_str} | Status: {broadcast['status']}")
+        print(f"    Date: {broadcast['broadcast_date']}")
+        print()
+    
+    return broadcasts
 
 def show_database_overview():
     """Show complete overview of database contents"""
@@ -1212,16 +1493,6 @@ print("10. update_ads_database()                  # Update ads from folder")
 print("="*60)
 
 
-# In[28]:
+list_all_reports()
 
-
-list_all_reports()                          # Show all reports
-
-
-# In[29]:
-
-
-download_latest_report()               # Quick download latest
-
-
-# In[ ]:
+download_latest_report()
