@@ -30,6 +30,7 @@ def list_ads(db: Session = Depends(get_db)):
 def upload_audio(file: UploadFile = File(...)):
     return {"url": s3.upload_file_to_s3(file, file.filename, 'ad_masters')}
 
+
 @router.put("/status")
 def update_status(db: Session = Depends(get_db), status=Body(...), id=Body(...)):
     return crud.set_ad_status(db, id, status)

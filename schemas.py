@@ -1,12 +1,12 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 
 class AdBase(BaseModel):
     brand: str
     advertisement: str
-    filename: str
     duration: int
+    filename: str
     status: str
 
 
@@ -18,15 +18,14 @@ class AdOut(AdBase):
     id: int
     upload_date: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BroadcastBase(BaseModel):
     radio_station: str
     broadcast_recording: str
-    filename: str
     duration: int
+    filename: str
     status: str
 
 
@@ -37,6 +36,25 @@ class BroadcastCreate(BroadcastBase):
 class BroadcastOut(BroadcastBase):
     id: int
     broadcast_date: datetime
+    processing_time: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SongBase(BaseModel):
+    artist: str
+    name: str
+    filename: str
+    duration: int
+    status: str
+
+
+class SongCreate(SongBase):
+    pass
+
+
+class SongOut(SongBase):
+    id: int
+    upload_date: datetime
+
+    model_config = ConfigDict(from_attributes=True)

@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[26]:
-
-
 from scipy.signal import correlate
 import os
 import numpy as np
@@ -14,107 +8,15 @@ from datetime import timedelta, datetime
 import librosa
 import librosa.display
 from sklearn.preprocessing import normalize
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, LargeBinary, ForeignKey
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from models import Ad, Song, Broadcast, AdDetectionResult, ExcelReports
 from io import BytesIO
 from fastapi.responses import StreamingResponse
 import soundfile as sf
 from pydub import AudioSegment
 import io
-from pathlib import Path
-
-
-# Database setup
-Base = declarative_base()
-
-
-class AdDetectionResult(Base):
-    __tablename__ = 'ad_detection_results'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    brand = Column(String(100), nullable=False)
-    description = Column(Text, nullable=False)
-    start_time_seconds = Column(Float, nullable=False)
-    end_time_seconds = Column(Float, nullable=False)
-    duration_seconds = Column(Float, nullable=False)
-    correlation_score = Column(Float, nullable=True)
-    raw_correlation = Column(Float, nullable=True)
-    mfcc_correlation = Column(Float, nullable=True)
-    overlap_duration = Column(Float, nullable=True)
-    detection_timestamp = Column(DateTime, default=datetime.now)
-    processing_status = Column(String(50), default='completed')
-    total_matches_found = Column(Integer, default=0)
-    clip_type = Column(String(24), nullable=True) 
-    ad_id = Column(Integer, ForeignKey('ads.id'), nullable=False, default=-1)
-    broadcast_id = Column(Integer, ForeignKey(
-        'broadcasts.id'), nullable=False, default=-1)
-
-    # Relationships
-    ad = relationship("Ads", back_populates="detection_results")
-    broadcast = relationship("Broadcasts", back_populates="detection_results")
-
-
-class ExcelReports(Base):
-    __tablename__ = 'excel_reports'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    broadcast_id = Column(Integer, ForeignKey(
-        'broadcasts.id'), nullable=False)  # ADD THIS LINE
-    excel_data = Column(LargeBinary, nullable=False)
-    excel_filename = Column(String(255), nullable=False)
-    created_timestamp = Column(DateTime, default=datetime.now)
-    total_ads_detected = Column(Integer, default=0)
-    file_size_bytes = Column(Integer, default=0)
-
-    # Add relationship
-    broadcast = relationship("Broadcasts", back_populates="excel_reports")
-
-
-class Ads(Base):
-    __tablename__ = 'ads'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    brand = Column(String(255), nullable=False)
-    advertisement = Column(String(255), nullable=False)  # File path or name
-    duration = Column(Integer, nullable=True)  # Duration in seconds
-    upload_date = Column(DateTime, default=datetime.now)
-    status = Column(String(8), default='Active')
-
-    # Relationship
-    detection_results = relationship("AdDetectionResult", back_populates="ad")
-
-
-class Broadcasts(Base):
-    __tablename__ = 'broadcasts'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    radio_station = Column(String(255), nullable=True)
-    broadcast_recording = Column(
-        String(255), nullable=False)  # File path or name
-    duration = Column(Integer, nullable=True)  # Duration in seconds
-    broadcast_date = Column(DateTime, default=datetime.now)
-    status = Column(String(9), default='Pending')
-
-    # Relationships
-    detection_results = relationship(
-        "AdDetectionResult", back_populates="broadcast")
-    excel_reports = relationship(
-        "ExcelReports", back_populates="broadcast")  # ADDED
-
-class Songs(Base):
-    __tablename__ = 'songs'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    artist = Column(String(255), nullable=False)
-    name = Column(String(255), nullable=False)
-    filename = Column(String(255), nullable=False)
-    duration = Column(Integer, nullable=True)  # Duration in seconds
-    upload_date = Column(DateTime, default=datetime.now)
-    status = Column(String(8), default='Active')
-
-
-# Your existing utility functions (keeping them as they are)
 
 
 def seconds_to_standard_time(seconds):
@@ -122,7 +24,6 @@ def seconds_to_standard_time(seconds):
 
 
 def extract_brand_name(filename):
-    """Extract brand name from filename - everything before the first underscore"""
     if '_' in filename:
         return filename.split('_')[0]
     else:
@@ -238,7 +139,8 @@ def find_matches_improved(master_audio, master_sr, radio_audio, radio_sr, thresh
 
     return matches
 
-# Enhanced Database Manager Class
+
+Base = declarative_base()
 
 
 class EnhancedRadioRecordingManager:
@@ -253,8 +155,8 @@ class EnhancedRadioRecordingManager:
         """Get ad ID from the ads table by filename"""
         session = self.Session()
         try:
-            ad = session.query(Ads).filter(
-                Ads.advertisement == filename).first()
+            ad = session.query(Ad).filter(
+                Ad.advertisement == filename).first()
             return ad.id if ad else -1
         except Exception as e:
             print(f"Error getting ad ID for {filename}: {e}")
@@ -265,8 +167,8 @@ class EnhancedRadioRecordingManager:
     def get_broadcast_by_id(self, broadcast_id):
         session = self.Session()
         try:
-            broadcast = session.query(Broadcasts).filter(
-                Broadcasts.id == broadcast_id).first()
+            broadcast = session.query(Broadcast).filter(
+                Broadcast.id == broadcast_id).first()
             return broadcast
         except Exception as e:
             print(f"Error getting broadcast for id {broadcast_id}: {e}")
@@ -278,8 +180,8 @@ class EnhancedRadioRecordingManager:
         """Get broadcast ID from the broadcasts table by filename"""
         session = self.Session()
         try:
-            broadcast = session.query(Broadcasts).filter(
-                Broadcasts.broadcast_recording == filename).first()
+            broadcast = session.query(Broadcast).filter(
+                Broadcast.broadcast_recording == filename).first()
             return broadcast.id if broadcast else -1
         except Exception as e:
             print(f"Error getting broadcast ID for {filename}: {e}")
@@ -287,7 +189,6 @@ class EnhancedRadioRecordingManager:
         finally:
             session.close()
 
-    # NEW METHODS FOR ADS TABLE
     def populate_ads_from_folder(self, ad_masters_folder="ad_masters"):
         """Populate ads table from ad_masters folder"""
         session = self.Session()
@@ -306,18 +207,15 @@ class EnhancedRadioRecordingManager:
                     filepath = os.path.join(ad_masters_folder, filename)
 
                     # Check if ad already exists
-                    existing_ad = session.query(Ads).filter(
-                        Ads.advertisement == filename
+                    existing_ad = session.query(Ad).filter(
+                        Ad.advertisement == filename
                     ).first()
 
                     # Get duration
                     duration_seconds = None
-                    try:
-                        audio, sr = load_audio(filepath)
-                        if audio is not None:
-                            duration_seconds = int(len(audio) / sr)
-                    except:
-                        pass
+                    audio, sr = load_audio(filepath)
+                    if audio is not None:
+                        duration_seconds = int(len(audio) / sr)
 
                     brand_name = extract_brand_name(filename)
 
@@ -329,7 +227,7 @@ class EnhancedRadioRecordingManager:
                         updated_count += 1
                     else:
                         # Add new record
-                        new_ad = Ads(
+                        new_ad = Ad(
                             brand=brand_name,
                             advertisement=filename,
                             duration=duration_seconds,
@@ -339,7 +237,7 @@ class EnhancedRadioRecordingManager:
                         added_count += 1
 
             session.commit()
-            print(f" Ads table updated:")
+            print(" Ad table updated:")
             print(f"  - New ads added: {added_count}")
             print(f"  - Existing ads updated: {updated_count}")
 
@@ -356,8 +254,8 @@ class EnhancedRadioRecordingManager:
         """Get all ads from the database"""
         session = self.Session()
         try:
-            ads = session.query(Ads).order_by(
-                Ads.brand, Ads.advertisement).all()
+            ads = session.query(Ad).order_by(
+                Ad.brand, Ad.advertisement).all()
 
             if not ads:
                 print("No ads found in database.")
@@ -394,14 +292,13 @@ class EnhancedRadioRecordingManager:
         finally:
             session.close()
 
-    # NEW METHODS FOR BROADCASTS TABLE
     def add_broadcast(self, broadcast_recording, radio_station=None, duration=None, broadcast_date=None, status='Pending'):
         """Add a new broadcast to the database"""
         session = self.Session()
         try:
             # Check if broadcast already exists
-            existing = session.query(Broadcasts).filter(
-                Broadcasts.broadcast_recording == broadcast_recording
+            existing = session.query(Broadcast).filter(
+                Broadcast.broadcast_recording == broadcast_recording
             ).first()
 
             if existing:
@@ -412,7 +309,7 @@ class EnhancedRadioRecordingManager:
             if broadcast_date is None:
                 broadcast_date = datetime.now()
 
-            new_broadcast = Broadcasts(
+            new_broadcast = Broadcast(
                 radio_station=radio_station,
                 broadcast_recording=broadcast_recording,
                 duration=duration,
@@ -438,8 +335,8 @@ class EnhancedRadioRecordingManager:
         """Update broadcast processing status"""
         session = self.Session()
         try:
-            broadcast = session.query(Broadcasts).filter(
-                Broadcasts.id == broadcast_id
+            broadcast = session.query(Broadcast).filter(
+                Broadcast.id == broadcast_id
             ).first()
 
             if broadcast:
@@ -462,8 +359,8 @@ class EnhancedRadioRecordingManager:
         """Get all broadcasts from the database"""
         session = self.Session()
         try:
-            broadcasts = session.query(Broadcasts).order_by(
-                Broadcasts.broadcast_date.desc()).all()
+            broadcasts = session.query(Broadcast).order_by(
+                Broadcast.broadcast_date.desc()).all()
 
             if not broadcasts:
                 print("No broadcasts found in database.")
@@ -624,8 +521,8 @@ class EnhancedRadioRecordingManager:
         session = self.Session()
         try:
             # Get broadcast info
-            broadcast = session.query(Broadcasts).filter(
-                Broadcasts.id == broadcast_id).first()
+            broadcast = session.query(Broadcast).filter(
+                Broadcast.id == broadcast_id).first()
             if not broadcast:
                 print(f" Broadcast with ID {broadcast_id} not found")
                 return
@@ -663,7 +560,6 @@ class EnhancedRadioRecordingManager:
                 df.to_excel(writer, sheet_name='Ad Detection Results',
                             index=False, header=False)
 
-                workbook = writer.book
                 worksheet = writer.sheets['Ad Detection Results']
 
                 from openpyxl.styles import PatternFill, Font, Alignment
@@ -720,7 +616,7 @@ class EnhancedRadioRecordingManager:
         """Get list of all processed radio recordings"""
         session = self.Session()
         try:
-            broadcasts = session.query(Broadcasts.broadcast_recording).all()
+            broadcasts = session.query(Broadcast.broadcast_recording).all()
             return [b[0] for b in broadcasts]
         except Exception as e:
             print(f"Error getting recordings list: {e}")
@@ -733,8 +629,8 @@ class EnhancedRadioRecordingManager:
         session = self.Session()
         try:
             # Get broadcast ID first
-            broadcast = session.query(Broadcasts).filter(
-                Broadcasts.id == broadcast_id
+            broadcast = session.query(Broadcast).filter(
+                Broadcast.id == broadcast_id
             ).first()
 
             if not broadcast:
@@ -772,8 +668,8 @@ class EnhancedRadioRecordingManager:
         """Return Excel file as a FastAPI StreamingResponse"""
         session = self.Session()
         try:
-            broadcast = session.query(Broadcasts).filter(
-                Broadcasts.id == broadcast_id
+            broadcast = session.query(Broadcast).filter(
+                Broadcast.id == broadcast_id
             ).first()
 
             if not broadcast:
@@ -809,8 +705,8 @@ class EnhancedRadioRecordingManager:
         """Get information about all available Excel reports"""
         session = self.Session()
         try:
-            reports = session.query(ExcelReports, Broadcasts).join(
-                Broadcasts, ExcelReports.broadcast_id == Broadcasts.id
+            reports = session.query(ExcelReports, Broadcast).join(
+                Broadcast, ExcelReports.broadcast_id == Broadcast.id
             ).order_by(ExcelReports.created_timestamp.desc()).all()
 
             if not reports:
@@ -836,7 +732,7 @@ class EnhancedRadioRecordingManager:
                 print(f"{i:2d}. {broadcast.broadcast_recording}")
                 print(f"     Excel: {report.excel_filename}")
                 print(
-                    f"     Ads: {report.total_ads_detected} | Created: {info['created']} | Size: {info['size_kb']} KB")
+                    f"     Ad: {report.total_ads_detected} | Created: {info['created']} | Size: {info['size_kb']} KB")
                 print()
 
             return report_info
@@ -852,8 +748,8 @@ class EnhancedRadioRecordingManager:
         session = self.Session()
         try:
             # Get broadcast first
-            broadcast = session.query(Broadcasts).filter(
-                Broadcasts.broadcast_recording == radio_filename
+            broadcast = session.query(Broadcast).filter(
+                Broadcast.broadcast_recording == radio_filename
             ).first()
 
             if not broadcast:
@@ -870,7 +766,7 @@ class EnhancedRadioRecordingManager:
 
             print(f"\n Detection Summary for: {radio_filename}")
             print("=" * 60)
-            print(f"Total Ads Detected: {len(results)}")
+            print(f"Total Ad Detected: {len(results)}")
             print(
                 f"Processing Date: {results[0].detection_timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"Broadcast ID: {results[0].broadcast_id}")
@@ -914,40 +810,34 @@ class EnhancedRadioRecordingManager:
         finally:
             session.close()
 
-    def extract_clip_from_broadcast(self, broadcast_id, brand_or_artist, advertisement_or_name, 
-                               clip_type, start_time, end_time, ad_masters_folder="ad_masters", 
-                               songs_folder="songs"):
-        """
-    Extract a clip from a broadcast and save/store based on type
-    
-    Parameters:
-    - broadcast_id: ID of the broadcast in database
-    - brand_or_artist: Brand name (for ads) or Artist name (for songs)  
-    - advertisement_or_name: Ad description or Song name
-    - clip_type: 'ad', 'song', or 'speech'
-    - start_time: Start time in seconds
-    - end_time: End time in seconds
-    - ad_masters_folder: Folder to save ad clips
-    - songs_folder: Folder to save song clips
-        """
-    
+    def extract_clip_from_broadcast(
+            self,
+            broadcast_id,
+            brand_or_artist,
+            advertisement_or_name,
+            clip_type,
+            start_time,
+            end_time,
+            ad_masters_folder="ad_masters",
+            songs_folder="songs"
+    ):
         session = self.Session()
         try:
-        # Get broadcast information
-            broadcast = session.query(Broadcasts).filter(
-                Broadcasts.id == broadcast_id
+            # Get broadcast information
+            broadcast = session.query(Broadcast).filter(
+                Broadcast.id == broadcast_id
             ).first()
-        
+
             if not broadcast:
                 print(f" Broadcast with ID {broadcast_id} not found")
                 return False
-            
+
             broadcast_file = broadcast.broadcast_recording
             print(f" Processing broadcast: {broadcast_file}")
-        
+
             if clip_type.lower() == 'speech':
                 print(" Speech type detected - inserting directly to database")
-            
+
                 speech_result = AdDetectionResult(
                     brand="Speech",
                     description="",
@@ -962,37 +852,37 @@ class EnhancedRadioRecordingManager:
                     ad_id=-1,  # No corresponding ad file
                     broadcast_id=broadcast_id,
                     processing_status='manual_entry',
-                    clip_type='speech'  
+                    clip_type='speech'
 
                 )
-            
+
                 session.add(speech_result)
                 session.commit()
                 print(f" Speech entry added to detection results")
                 return True
-            
+
         # For ads and songs, we need to extract audio
         # Find the broadcast file
 
             radio_file_path = get_first_file_path("radio_recording")
         #     broadcast_path = None
         #     possible_paths = [
-        #         broadcast_file,  
+        #         broadcast_file,
         #         os.path.join("radio_recording", broadcast_file),  # In radio_recording folder
         #         os.path.join("broadcasts", broadcast_file),  # In broadcasts folder
         #     ]
-        # 
+        #
         #     for path in possible_paths:
         #         if os.path.exists(path):
         #             broadcast_path = path
         #             break
-        #         
+        #
         #     if not broadcast_path:
         #         print(f" Broadcast file not found: {broadcast_file}")
         #         return False
-        #     
+        #
         #     print(f"🎵 Loading broadcast audio from: {broadcast_path}")
-        # 
+        #
         # Load the broadcast audio
             broadcast_audio, broadcast_sr = load_audio(radio_file_path)
             if broadcast_audio is None:
@@ -1000,54 +890,61 @@ class EnhancedRadioRecordingManager:
                 return False
             else:
                 print("Loaded audio file")
-            
+
         # Calculate sample indices for extraction
             start_sample = int(start_time * broadcast_sr)
             end_sample = int(end_time * broadcast_sr)
-        
+
         # Validate indices
             if start_sample < 0 or end_sample > len(broadcast_audio) or start_sample >= end_sample:
                 print(f" Invalid time range: {start_time}s to {end_time}s")
-                print(f"   Broadcast duration: {len(broadcast_audio)/broadcast_sr:.2f}s")
+                print(
+                    f"   Broadcast duration: {len(broadcast_audio)/broadcast_sr:.2f}s")
                 return False
-            
+
         # Extract the audio clip
             extracted_clip = broadcast_audio[start_sample:end_sample]
             duration = len(extracted_clip) / broadcast_sr
-        
-            print(f" Extracted clip: {duration:.2f}s ({start_time}s - {end_time}s)")
-        
+
+            print(
+                f" Extracted clip: {duration:.2f}s ({start_time}s - {end_time}s)")
+
         # Generate filename based on type
             if clip_type.lower() == 'ad':
-            # Create ad filename: Brand_Description_duration.wav
-                safe_brand = "".join(c for c in brand_or_artist if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                safe_desc = "".join(c for c in advertisement_or_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                # Create ad filename: Brand_Description_duration.wav
+                safe_brand = "".join(
+                    c for c in brand_or_artist if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_desc = "".join(c for c in advertisement_or_name if c.isalnum() or c in (
+                    ' ', '-', '_')).rstrip()
                 filename = f"{safe_brand}_{safe_desc}.mp3"
                 output_folder = ad_masters_folder
-            
+
             elif clip_type.lower() == 'song':
-            # Create song filename: Artist_SongName_duration.wav  
-                safe_artist = "".join(c for c in brand_or_artist if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                safe_song = "".join(c for c in advertisement_or_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                # Create song filename: Artist_SongName_duration.wav
+                safe_artist = "".join(
+                    c for c in brand_or_artist if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_song = "".join(c for c in advertisement_or_name if c.isalnum() or c in (
+                    ' ', '-', '_')).rstrip()
                 filename = f"{safe_artist}_{safe_song}.mp3"
                 output_folder = songs_folder
-            
+
             else:
-                print(f" Invalid clip type: {clip_type}. Use 'ad', 'song', or 'speech'")
+                print(
+                    f" Invalid clip type: {clip_type}. Use 'ad', 'song', or 'speech'")
                 return False
-            
+
         # Create output directory if it doesn't exist
             os.makedirs(output_folder, exist_ok=True)
             output_path = os.path.join(output_folder, filename)
-        
+
         # Save the extracted clip
             try:
-    # Convert numpy array to AudioSegment
-    # First save as temporary WAV in memory
+                # Convert numpy array to AudioSegment
+                # First save as temporary WAV in memory
                 temp_wav = io.BytesIO()
                 sf.write(temp_wav, extracted_clip, broadcast_sr, format='WAV')
                 temp_wav.seek(0)
-    
+
     # Load into pydub and export as MP3
                 audio_segment = AudioSegment.from_wav(temp_wav)
                 audio_segment.export(output_path, format="mp3", bitrate="192k")
@@ -1055,11 +952,11 @@ class EnhancedRadioRecordingManager:
             except Exception as e:
                 print(f" Error saving audio file: {e}")
                 return False
-            
+
         # Add to appropriate database table
             if clip_type.lower() == 'ad':
-            # Add to ads table
-                new_ad = Ads(
+                # Add to ads table
+                new_ad = Ad(
                     brand=brand_or_artist,
                     advertisement=filename,
                     duration=int(duration),
@@ -1067,17 +964,17 @@ class EnhancedRadioRecordingManager:
                 )
                 session.add(new_ad)
                 session.commit()
-            
+
             # Get the new ad ID
                 ad_id = new_ad.id
                 print(f" Added to ads table (ID: {ad_id})")
-            
+
             # Also add to detection results to show it was found in this broadcast
                 detection_result = AdDetectionResult(
                     brand=brand_or_artist,
                     description=advertisement_or_name,
                     start_time_seconds=float(start_time),
-                    end_time_seconds=float(end_time), 
+                    end_time_seconds=float(end_time),
                     duration_seconds=duration,
                     correlation_score=1.0,  # Perfect score for manually extracted
                     raw_correlation=1.0,
@@ -1087,14 +984,14 @@ class EnhancedRadioRecordingManager:
                     ad_id=ad_id,
                     broadcast_id=broadcast_id,
                     processing_status='manual_extraction',
-                    clip_type='ad'  
+                    clip_type='ad'
 
                 )
                 session.add(detection_result)
-            
+
             elif clip_type.lower() == 'song':
-            # Add to songs table (assuming you want to track songs similarly)
-                new_song = Songs(
+                # Add to songs table (assuming you want to track songs similarly)
+                new_song = Song(
                     artist=brand_or_artist,
                     name=advertisement_or_name,
                     filename=filename,
@@ -1120,18 +1017,18 @@ class EnhancedRadioRecordingManager:
                     ad_id=song_id,
                     broadcast_id=broadcast_id,
                     processing_status='manual_extraction',
-                    clip_type='song'  
+                    clip_type='song'
                 )
                 session.add(song_detection_result)
             session.commit()
-        
+
             print(f" Successfully processed {clip_type}: {filename}")
             print(f"    Saved to: {output_folder}")
             print(f"    Duration: {duration:.2f}s")
             print(f"    Linked to broadcast ID: {broadcast_id}")
-        
+
             return True
-        
+
         except Exception as e:
             session.rollback()
             print(f" Error extracting clip: {e}")
@@ -1140,6 +1037,8 @@ class EnhancedRadioRecordingManager:
             session.close()
 
 # In[27]:
+
+
 def get_first_file_path(folder_path: str) -> str | None:
     try:
         files = os.listdir(folder_path)
@@ -1373,11 +1272,11 @@ def download_report_by_radio_name(radio_filename, save_folder="downloads"):
     return fetch_excel_report(radio_filename, save_path)
 
 
-def extract_clip(broadcast_id, brand_or_artist, advertisement_or_name, 
-                                     clip_type, start_time, end_time):
+def extract_clip(broadcast_id, brand_or_artist, advertisement_or_name,
+                 clip_type, start_time, end_time):
     """
     Simple wrapper function to extract clips
-    
+
     Example usage:
     extract_clip(
         broadcast_id=1,
@@ -1390,21 +1289,22 @@ def extract_clip(broadcast_id, brand_or_artist, advertisement_or_name,
     """
     db_manager = EnhancedRadioRecordingManager()
     return db_manager.extract_clip_from_broadcast(
-        broadcast_id, brand_or_artist, advertisement_or_name, 
+        broadcast_id, brand_or_artist, advertisement_or_name,
         clip_type, start_time, end_time
     )
 # COMPREHENSIVE DATABASE OVERVIEW FUNCTION
+
 
 def show_broadcasts_for_extraction():
     """Show all broadcasts available for clip extraction"""
     db_manager = EnhancedRadioRecordingManager()
     broadcasts = db_manager.get_all_broadcasts()
-    
+
     if not broadcasts:
         print("No broadcasts available for extraction")
         return
-        
-    print("\n🎵 Available Broadcasts for Clip Extraction:")
+
+    print("\n🎵 Available Broadcast for Clip Extraction:")
     print("=" * 60)
     for broadcast in broadcasts:
         duration_str = broadcast['duration_str'] if broadcast['duration'] else "Unknown"
@@ -1412,8 +1312,9 @@ def show_broadcasts_for_extraction():
         print(f"    Duration: {duration_str} | Status: {broadcast['status']}")
         print(f"    Date: {broadcast['broadcast_date']}")
         print()
-    
+
     return broadcasts
+
 
 def show_database_overview():
     """Show complete overview of database contents"""
@@ -1426,8 +1327,8 @@ def show_database_overview():
     # Get counts
     session = db_manager.Session()
     try:
-        ads_count = session.query(Ads).count()
-        broadcasts_count = session.query(Broadcasts).count()
+        ads_count = session.query(Ad).count()
+        broadcasts_count = session.query(Broadcast).count()
         results_count = session.query(AdDetectionResult).count()
         reports_count = session.query(ExcelReports).count()
 
@@ -1438,10 +1339,10 @@ def show_database_overview():
         print()
 
         # Show recent activity
-        recent_broadcasts = session.query(Broadcasts).order_by(
-            Broadcasts.broadcast_date.desc()).limit(3).all()
+        recent_broadcasts = session.query(Broadcast).order_by(
+            Broadcast.broadcast_date.desc()).limit(3).all()
         if recent_broadcasts:
-            print(" Recent Broadcasts:")
+            print(" Recent Broadcast:")
             for b in recent_broadcasts:
                 print(
                     f"   • {b.broadcast_recording} ({b.status}) - {b.broadcast_date.strftime('%Y-%m-%d')}")
@@ -1451,48 +1352,3 @@ def show_database_overview():
         print(f"Error getting overview: {e}")
     finally:
         session.close()
-
-
-# Example usage
-if __name__ == "__main__":
-    print(" Enhanced Radio Advertisement Detection System")
-    print("=" * 50)
-
-    # First-time setup
-    print(" Setting up database and populating ads table...")
-    setup_database_tables()
-
-    # Process the current audio clip in radio_recording folder
-    processed_file = process_current_audio_clip()
-
-    if processed_file:
-        print(f"\n Available commands:")
-        print(f"   list_all_reports()                          # Show all reports")
-        print(
-            f"   fetch_excel_report('{processed_file}')       # Download Excel")
-        print(
-            f"   get_report_summary('{processed_file}')       # Show summary")
-        print(f"   download_latest_report()                    # Quick download")
-        print(f"   view_all_ads()                              # Show all ads")
-        print(f"   view_all_broadcasts()                       # Show all broadcasts")
-        print(f"   show_database_overview()                    # Complete overview")
-
-print("\n" + "="*60)
-print(" READY TO USE - Key Functions:")
-print("="*60)
-print("1.  setup_database_tables()                # First-time setup")
-print("2.  process_current_audio_clip()           # Process current audio")
-print("3.  list_all_reports()                     # Show all reports")
-print("4.  fetch_excel_report('filename.mp3')     # Download specific Excel")
-print("5.  get_report_summary('filename.mp3')     # Show detection summary")
-print("6.  download_latest_report()               # Quick download latest")
-print("7.  view_all_ads()                         # Show advertisement masters")
-print("8.  view_all_broadcasts()                  # Show broadcast recordings")
-print("9.  show_database_overview()               # Complete database overview")
-print("10. update_ads_database()                  # Update ads from folder")
-print("="*60)
-
-
-list_all_reports()
-
-download_latest_report()
