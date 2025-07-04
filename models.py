@@ -34,7 +34,7 @@ class Broadcast(Base):
     duration = Column(Integer)
     filename = Column(String(255))
     broadcast_date = Column(DateTime, default=datetime.now)
-    processing_time = Column(DateTime)
+    processing_time = Column(DateTime, nullable=True)
     status = Column(String(9))
 
 

@@ -1,4 +1,5 @@
 from scipy.signal import correlate
+import time
 import os
 import numpy as np
 import pandas as pd
@@ -16,6 +17,9 @@ from io import BytesIO
 from fastapi.responses import StreamingResponse
 import soundfile as sf
 from pydub import AudioSegment
+from fastapi import HTTPException
+import logging
+import traceback
 import io
 
 
@@ -434,7 +438,8 @@ class EnhancedRadioRecordingManager:
                         'correlation': match['correlation'],
                         'overlap_duration': match.get('overlap_duration', match['duration']),
                         'raw_correlation': match.get('raw_correlation', match['correlation']),
-                        'mfcc_correlation': match.get('mfcc_correlation', match['correlation'])
+                        'mfcc_correlation': match.get('mfcc_correlation', match['correlation']),
+                        'clip_type': 'ad'
                     })
 
             # Sort and filter overlapping matches
@@ -458,7 +463,8 @@ class EnhancedRadioRecordingManager:
                     overlap_duration=match['overlap_duration'],
                     total_matches_found=len(final_matches),
                     ad_id=match['ad_id'],
-                    broadcast_id=broadcast_id
+                    broadcast_id=broadcast_id,
+                    clip_type=match['clip_type']
                 )
                 session.add(db_record)
 
@@ -822,6 +828,7 @@ class EnhancedRadioRecordingManager:
             songs_folder="songs"
     ):
         session = self.Session()
+        start_time = time.time()
         try:
             # Get broadcast information
             broadcast = session.query(Broadcast).filter(
@@ -861,29 +868,8 @@ class EnhancedRadioRecordingManager:
                 print(f" Speech entry added to detection results")
                 return True
 
-        # For ads and songs, we need to extract audio
-        # Find the broadcast file
-
-            radio_file_path = get_first_file_path("radio_recording")
-        #     broadcast_path = None
-        #     possible_paths = [
-        #         broadcast_file,
-        #         os.path.join("radio_recording", broadcast_file),  # In radio_recording folder
-        #         os.path.join("broadcasts", broadcast_file),  # In broadcasts folder
-        #     ]
-        #
-        #     for path in possible_paths:
-        #         if os.path.exists(path):
-        #             broadcast_path = path
-        #             break
-        #
-        #     if not broadcast_path:
-        #         print(f" Broadcast file not found: {broadcast_file}")
-        #         return False
-        #
-        #     print(f"🎵 Loading broadcast audio from: {broadcast_path}")
-        #
         # Load the broadcast audio
+            radio_file_path = get_first_file_path("radio_recording")
             broadcast_audio, broadcast_sr = load_audio(radio_file_path)
             if broadcast_audio is None:
                 print(f" Failed to load broadcast audio")
@@ -1022,6 +1008,9 @@ class EnhancedRadioRecordingManager:
                 session.add(song_detection_result)
             session.commit()
 
+            elapsed = time.time() - start_time
+            logging.info(f"extract_clip_from_broadcast completed in {elapsed:.2f} seconds")
+
             print(f" Successfully processed {clip_type}: {filename}")
             print(f"    Saved to: {output_folder}")
             print(f"    Duration: {duration:.2f}s")
@@ -1032,6 +1021,12 @@ class EnhancedRadioRecordingManager:
         except Exception as e:
             session.rollback()
             print(f" Error extracting clip: {e}")
+            error_msg = f"extract_clip_from_broadcast failed after {time.time() - start_time:.2f} seconds: {str(e)}"
+            logging.error(error_msg)
+            logging.error(traceback.format_exc())
+            raise HTTPException(status_code=505, detail=str(e))
+
+
             return False
         finally:
             session.close()
@@ -1057,99 +1052,92 @@ def get_first_file_path(folder_path: str) -> str | None:
 def process_single_radio_clip(broadcast_id, ad_masters_folder="ad_masters", radio_recording_directory="radio_recording", correlation_threshold=0.65, db_manager=None):
     """Process a single radio recording clip and save everything to database"""
 
-    if db_manager is None:
-        db_manager = EnhancedRadioRecordingManager()
-
-    radio_file_path = get_first_file_path(radio_recording_directory)
-
-    print(f"\n Processing: {radio_file_path}")
-    print("=" * 50)
-
-    # Add broadcast to database if not exists
+    start_time = time.time()
     try:
-        audio, sr = load_audio(radio_file_path)
-        if audio is not None:
-            duration_seconds = int(len(audio) / sr)
+        if db_manager is None:
+            db_manager = EnhancedRadioRecordingManager()
+
+        radio_file_path = get_first_file_path(radio_recording_directory)
+
+        print(f"\n Processing: {radio_file_path}")
+        print("=" * 50)
+
+        print(" Loading advertisement masters...")
+        masters = {}
+        for filename in os.listdir(ad_masters_folder):
+            if filename.endswith(('.wav', '.mp3')):
+                filepath = os.path.join(ad_masters_folder, filename)
+                audio, sr = load_audio(filepath)
+                if audio is not None:
+                    masters[filename] = {
+                        'audio': audio,
+                        'sr': sr,
+                        'duration': len(audio) / sr
+                    }
+
+        print(f" Loaded {len(masters)} advertisement masters")
+
+        # Load radio recording
+        print(" Loading radio recording...")
+        radio_recording, radio_sr = load_audio(radio_file_path)
+        if radio_recording is None:
+            print(f" Error: Could not load radio recording")
+            db_manager.update_broadcast_status(broadcast_id, "Failed")
+            return False
+
+        radio_duration = len(radio_recording) / radio_sr
+        print(
+            f" Loaded radio recording (Duration: {seconds_to_standard_time(radio_duration)})")
+
+        # Find matches
+        print(" Finding advertisement matches...")
+        all_matches = {}
+        total_matches = 0
+
+        for master_name, master_data in masters.items():
+            matches = find_matches_improved(
+                master_data['audio'],
+                master_data['sr'],
+                radio_recording,
+                radio_sr,
+                threshold=correlation_threshold
+            )
+            all_matches[master_name] = matches
+            total_matches += len(matches)
+            if len(matches) > 0:
+                print(f"{master_name}: {len(matches)} matches")
+
+        print(f"Total raw matches found: {total_matches}")
+
+        # Save to database (this also generates and stores Excel)
+        final_matches = db_manager.save_detection_results(
+            broadcast_id, all_matches, radio_file_path)
+        db_manager.update_broadcast_status(broadcast_id, 'Processed')
+
+        # Logging
+        elapsed = time.time() - start_time
+        logging.info(f"process_single_radio_clip completed in {elapsed:.2f} seconds")
+
+        if final_matches > 0:
+            print(f" Processing completed successfully!")
+            print(f"    Final matches: {final_matches}")
+            print(f"    Results saved to database")
+            print(f"    Excel report generated and stored")
+
+            # Show summary
+            db_manager.get_detection_summary(radio_file_path)
+
+            return True
         else:
-            duration_seconds = None
-    except:
-        duration_seconds = None
+            print(f"  No matches found above threshold")
+            db_manager.update_broadcast_status(broadcast_id, "No Matches")
+            return False
 
-    # db_manager.add_broadcast(
-    #     broadcast_recording=radio_filename,
-    #     duration=duration_seconds,
-    #     status='Processing'
-    # )
-    #
-    # Load advertisement masters
-    print(" Loading advertisement masters...")
-    masters = {}
-    for filename in os.listdir(ad_masters_folder):
-        if filename.endswith(('.wav', '.mp3')):
-            filepath = os.path.join(ad_masters_folder, filename)
-            audio, sr = load_audio(filepath)
-            if audio is not None:
-                masters[filename] = {
-                    'audio': audio,
-                    'sr': sr,
-                    'duration': len(audio) / sr
-                }
-
-    print(f" Loaded {len(masters)} advertisement masters")
-
-    # Load radio recording
-    print(" Loading radio recording...")
-    radio_recording, radio_sr = load_audio(radio_file_path)
-    if radio_recording is None:
-        print(f" Error: Could not load radio recording")
-        db_manager.update_broadcast_status(broadcast_id, "Failed")
-        return False
-
-    radio_duration = len(radio_recording) / radio_sr
-    print(
-        f" Loaded radio recording (Duration: {seconds_to_standard_time(radio_duration)})")
-
-    # Find matches
-    print(" Finding advertisement matches...")
-    all_matches = {}
-    total_matches = 0
-
-    for master_name, master_data in masters.items():
-        matches = find_matches_improved(
-            master_data['audio'],
-            master_data['sr'],
-            radio_recording,
-            radio_sr,
-            threshold=correlation_threshold
-        )
-        all_matches[master_name] = matches
-        total_matches += len(matches)
-        if len(matches) > 0:
-            print(f"   {master_name}: {len(matches)} matches")
-
-    print(f" Total raw matches found: {total_matches}")
-
-    # Save to database (this also generates and stores Excel)
-    final_matches = db_manager.save_detection_results(
-        broadcast_id, all_matches, radio_file_path)
-    db_manager.update_broadcast_status(broadcast_id, 'Processed')
-
-    if final_matches > 0:
-        print(f" Processing completed successfully!")
-        print(f"    Final matches: {final_matches}")
-        print(f"    Results saved to database")
-        print(f"    Excel report generated and stored")
-
-        # Show summary
-        db_manager.get_detection_summary(radio_file_path)
-
-        return True
-    else:
-        print(f"  No matches found above threshold")
-        db_manager.update_broadcast_status(broadcast_id, "No Matches")
-        return False
-
-# NEW CONVENIENCE FUNCTIONS FOR THE NEW TABLES
+    except Exception as e:
+        error_msg = f"process_single_radio_clip failed after {time.time() - start_time:.2f} seconds: {str(e)}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        raise HTTPException(status_code=505, detail=str(e))
 
 
 def setup_database_tables(ad_masters_folder="ad_masters"):

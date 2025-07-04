@@ -1,4 +1,5 @@
 from pydantic import BaseModel, ConfigDict
+from typing import Optional
 from datetime import datetime
 
 
@@ -36,7 +37,7 @@ class BroadcastCreate(BroadcastBase):
 class BroadcastOut(BroadcastBase):
     id: int
     broadcast_date: datetime
-    processing_time: datetime
+    processing_time: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
 
