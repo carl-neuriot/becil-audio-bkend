@@ -1,4 +1,5 @@
 venv/
+broadcasts
 __pycache__/
 .env
 ad_masters
@@ -9,3 +10,4 @@ processing_code
 test
 excels
 songs
+error.txt

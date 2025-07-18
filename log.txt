@@ -1,1 +1,43 @@
 2025-07-04 16:16:11,651 - INFO - process_single_radio_clip completed in 6358.47 seconds
+2025-07-14 12:53:12,058 - ERROR - Failed to generate/retrieve Excel for broadcast 1 after regeneration attempt.
+2025-07-14 12:53:12,059 - ERROR - Error streaming Excel for broadcast 1: 500: Failed to generate Excel report on-the-fly.
+2025-07-14 12:53:12,060 - ERROR - Traceback (most recent call last):
+  File "/home/carlniot/neuriot/becil-bkend/final.py", line 627, in stream_excel_report
+    raise HTTPException(
+        status_code=500, detail="Failed to generate Excel report on-the-fly.")
+fastapi.exceptions.HTTPException: 500: Failed to generate Excel report on-the-fly.
+
+2025-07-14 13:08:26,280 - ERROR - Failed to generate/retrieve Excel for broadcast 1 after regeneration attempt.
+2025-07-14 13:08:26,281 - ERROR - Error streaming Excel for broadcast 1: 500: Failed to generate Excel report on-the-fly.
+2025-07-14 13:08:26,282 - ERROR - Traceback (most recent call last):
+  File "/home/carlniot/neuriot/becil-bkend/final.py", line 628, in stream_excel_report
+    raise HTTPException(
+        status_code=500, detail="Failed to generate Excel report on-the-fly.")
+fastapi.exceptions.HTTPException: 500: Failed to generate Excel report on-the-fly.
+
+2025-07-14 13:08:54,284 - ERROR - Failed to generate/retrieve Excel for broadcast 1 after regeneration attempt.
+2025-07-14 13:08:54,285 - ERROR - Error streaming Excel for broadcast 1: 500: Failed to generate Excel report on-the-fly.
+2025-07-14 13:08:54,285 - ERROR - Traceback (most recent call last):
+  File "/home/carlniot/neuriot/becil-bkend/final.py", line 628, in stream_excel_report
+    raise HTTPException(
+        status_code=500, detail="Failed to generate Excel report on-the-fly.")
+fastapi.exceptions.HTTPException: 500: Failed to generate Excel report on-the-fly.
+
+2025-07-14 13:10:18,564 - ERROR - Failed to generate/retrieve Excel for broadcast 1 after regeneration attempt.
+2025-07-14 13:10:18,564 - ERROR - Error streaming Excel for broadcast 1: 500: Failed to generate Excel report on-the-fly.
+2025-07-14 13:10:18,565 - ERROR - Traceback (most recent call last):
+  File "/home/carlniot/neuriot/becil-bkend/final.py", line 629, in stream_excel_report
+    raise HTTPException(
+        status_code=500, detail="Failed to generate Excel report on-the-fly.")
+fastapi.exceptions.HTTPException: 500: Failed to generate Excel report on-the-fly.
+
+2025-07-14 13:10:24,971 - ERROR - Failed to generate/retrieve Excel for broadcast 1 after regeneration attempt.
+2025-07-14 13:10:24,971 - ERROR - Error streaming Excel for broadcast 1: 500: Failed to generate Excel report on-the-fly.
+2025-07-14 13:10:24,971 - ERROR - Traceback (most recent call last):
+  File "/home/carlniot/neuriot/becil-bkend/final.py", line 629, in stream_excel_report
+    raise HTTPException(
+        status_code=500, detail="Failed to generate Excel report on-the-fly.")
+fastapi.exceptions.HTTPException: 500: Failed to generate Excel report on-the-fly.
+
+2025-07-17 16:25:57,683 - WARNING - Connection pool is full, discarding connection: becil-63217.s3.eu-north-1.amazonaws.com. Connection pool size: 10
+2025-07-17 16:26:01,687 - WARNING - Connection pool is full, discarding connection: becil-63217.s3.eu-north-1.amazonaws.com. Connection pool size: 10

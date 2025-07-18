@@ -23,15 +23,13 @@ def upload_file_to_s3(file, filename: str, s3_folder: str):
     return f"https://{BUCKET_NAME}.s3.amazonaws.com/{file_key}"
 
 
-def download_file_from_s3(file_name: str, local_dir: str):
+def download_file_from_s3(filename: str, local_dir: str, s3_folder: str):
     """
-    Downloads a file from 'broadcasts/{file_name}' in the S3 bucket
+    Downloads a file from 'broadcasts/{filename}' in the S3 bucket
     to the specified local directory.
     """
-    import os
-
-    s3_key = f"broadcasts/{file_name}"
-    local_path = os.path.join(local_dir, file_name)
+    s3_key = f"{s3_folder}/{filename}"
+    local_path = os.path.join(local_dir, filename)
 
     # Ensure the directory exists
     os.makedirs(local_dir, exist_ok=True)

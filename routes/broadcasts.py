@@ -3,10 +3,8 @@ import shutil
 from threading import Thread
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from final import process_single_radio_clip, fetch_excel_report, extract_clip
-import boto3
+from final import process_single_radio_clip, fetch_excel_report, extract_clip, reprocess_broadcast
 import os
-from dotenv import load_dotenv
 
 import crud
 import schemas
@@ -29,8 +27,8 @@ def create_broadcast(bc: schemas.BroadcastCreate, db: Session = Depends(get_db))
 
 
 @router.get("/", response_model=list[schemas.BroadcastOut])
-def list_broadcasts(db: Session = Depends(get_db)):
-    return crud.get_broadcasts(db)
+def list_broadcasts(radio_station: str = None, broadcast_recording: str = None, db: Session = Depends(get_db)):
+    return crud.get_broadcasts(db, radio_station=radio_station, broadcast_recording=broadcast_recording)
 
 
 @router.post("/upload-audio")  # Removed trailing slash
@@ -44,7 +42,7 @@ def download_from_s3(filename, folder="radio_recording"):
             shutil.rmtree(folder)
         os.makedirs(folder)
 
-        s3.download_file_from_s3(filename, folder)
+        s3.download_file_from_s3(filename, folder, "broadcasts")
         print("Download complete.")
         return
     except Exception as e:
@@ -59,12 +57,21 @@ def start_processing(
     db: Session = Depends(get_db)
 ):
     try:
-        download_from_s3(file_name)
-        thread = Thread(target=process_single_radio_clip, args=(broadcast_id,))
-        thread.start()
-        crud.set_broadcast_status(db, broadcast_id, "Processing")
+        broadcast = crud.get_broadcast(db, broadcast_id)
+        if broadcast.status == "Processed":
+            thread = Thread(target=reprocess_broadcast, args=(broadcast_id,))
+            thread.start()
+            crud.set_broadcast_status(db, broadcast_id, "Processing")
+            return {"message": "Reprocessing has started"}
+        elif broadcast.status == "Pending":
+            download_from_s3(file_name)
+            thread = Thread(target=process_single_radio_clip, args=(broadcast_id,))
+            thread.start()
+            crud.set_broadcast_status(db, broadcast_id, "Processing")
+            return {"message": "Processing has started"}
+        else:
+            return {"message": "Broadcast is already processing"}
 
-        return {"message": "Processing has started"}
     except Exception as e:
         print(e)
         return {"message": "An error has occured", "error": e}
@@ -104,4 +111,3 @@ def designate_clip(
     except Exception as e:
         print(e)
         return {"message": "An error has occured", "error": e}
-

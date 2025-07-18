@@ -15,8 +15,13 @@ def create_ad(db: Session, ad: schemas.AdCreate):
     return db_ad
 
 
-def get_ads(db: Session):
-    return db.query(Ad).all()
+def get_ads(db: Session, brand: str = None, advertisement: str = None):
+    query = db.query(Ad)
+    if brand:
+        query = query.filter(Ad.brand.ilike(f"%{brand}%"))
+    if advertisement:
+        query = query.filter(Ad.advertisement.ilike(f"%{advertisement}%"))
+    return query.all()
 
 
 def get_ad(db: Session, ad_id: int):
@@ -50,8 +55,13 @@ def create_broadcast(db: Session, broadcast: schemas.BroadcastCreate):
     return db_bc
 
 
-def get_broadcasts(db: Session):
-    return db.query(Broadcast).all()
+def get_broadcasts(db: Session, radio_station: str = None, broadcast_recording: str = None):
+    query = db.query(Broadcast)
+    if radio_station:
+        query = query.filter(Broadcast.radio_station.ilike(f"%{radio_station}%"))
+    if broadcast_recording:
+        query = query.filter(Broadcast.broadcast_recording.ilike(f"%{broadcast_recording}%"))
+    return query.all()
 
 
 def get_broadcast(db: Session, bc_id: int):

@@ -23,8 +23,8 @@ def create_ad(ad: schemas.AdCreate, db: Session = Depends(get_db)):
 
 
 @router.get("", response_model=list[schemas.AdOut])
-def list_ads(db: Session = Depends(get_db)):
-    return crud.get_ads(db)
+def list_ads(brand: str = None, advertisement: str = None, db: Session = Depends(get_db)):
+    return crud.get_ads(db, brand=brand, advertisement=advertisement)
 
 
 @router.post("/upload-audio")
