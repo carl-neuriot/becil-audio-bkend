@@ -19,7 +19,8 @@ s3 = boto3.client(
 
 def upload_file_to_s3(file, filename: str, s3_folder: str):
     file_key = f"{s3_folder}/{uuid4()}_{filename}"
-    s3.upload_fileobj(file.file, BUCKET_NAME, file_key)
+    file_obj = getattr(file, 'file', file)
+    s3.upload_fileobj(file_obj, BUCKET_NAME, file_key)
     return f"https://{BUCKET_NAME}.s3.amazonaws.com/{file_key}"
 
 

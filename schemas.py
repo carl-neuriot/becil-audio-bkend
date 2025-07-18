@@ -7,7 +7,7 @@ class AdBase(BaseModel):
     brand: str
     advertisement: str
     duration: int
-    filename: str
+    filename: Optional[str]
     status: str
 
 

@@ -24,6 +24,8 @@ def get_audio_file(filename: str, type: str):
             folder = "ad_masters"
         elif type == "broadcasts":
             folder = "broadcasts"
+        elif type == "songs":
+            folder = "song_masters"
         else:
             raise HTTPException(status_code=404, detail="Invalid audio type")
         return stream_audio_from_s3(filename, folder)

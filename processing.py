@@ -17,7 +17,7 @@ import traceback
 import io
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from s3 import download_file_from_s3
+from s3 import download_file_from_s3, upload_file_to_s3
 import schedule
 from audioutils import (
     seconds_to_standard_time,
@@ -739,11 +739,12 @@ class EnhancedRadioRecordingManager:
         clip_type,
         start_time,
         end_time,
+        broadcast_filename,
         ad_masters_folder="ad_masters",
         songs_folder="songs",
     ):
         session = self.Session()
-        start_time = time.time()
+        start_time_perf = time.time()
         try:
 
             broadcast = (
@@ -783,8 +784,12 @@ class EnhancedRadioRecordingManager:
                 print(f" Speech entry added to detection results")
                 return True
 
-            radio_file_path = get_first_file_path("radio_recording")
-            broadcast_audio, broadcast_sr = load_audio(radio_file_path)
+            local_broadcast_path = os.path.join("broadcasts", broadcast_filename)
+            if not os.path.exists(local_broadcast_path):
+                print(f"Broadcast clip {broadcast_filename} not found locally, downloading...")
+                download_file_from_s3(broadcast_filename, "broadcasts", "broadcasts")
+
+            broadcast_audio, broadcast_sr = load_audio(local_broadcast_path)
             if broadcast_audio is None:
                 print(f" Failed to load broadcast audio")
                 return False
@@ -812,7 +817,6 @@ class EnhancedRadioRecordingManager:
                 f" Extracted clip: {duration:.2f}s ({start_time}s - {end_time}s)")
 
             if clip_type.lower() == "ad":
-
                 safe_brand = "".join(
                     c for c in brand_or_artist if c.isalnum() or c in (" ", "-", "_")
                 ).rstrip()
@@ -823,9 +827,8 @@ class EnhancedRadioRecordingManager:
                 ).rstrip()
                 filename = f"{safe_brand}_{safe_desc}.mp3"
                 output_folder = ad_masters_folder
-
+                s3_folder = "ad_masters"
             elif clip_type.lower() == "song":
-
                 safe_artist = "".join(
                     c for c in brand_or_artist if c.isalnum() or c in (" ", "-", "_")
                 ).rstrip()
@@ -836,7 +839,7 @@ class EnhancedRadioRecordingManager:
                 ).rstrip()
                 filename = f"{safe_artist}_{safe_song}.mp3"
                 output_folder = songs_folder
-
+                s3_folder = "song_masters"
             else:
                 print(
                     f" Invalid clip type: {clip_type}. Use 'ad', 'song', or 'speech'")
@@ -846,7 +849,6 @@ class EnhancedRadioRecordingManager:
             output_path = os.path.join(output_folder, filename)
 
             try:
-
                 temp_wav = io.BytesIO()
                 sf.write(temp_wav, extracted_clip, broadcast_sr, format="WAV")
                 temp_wav.seek(0)
@@ -854,16 +856,24 @@ class EnhancedRadioRecordingManager:
                 audio_segment = AudioSegment.from_wav(temp_wav)
                 audio_segment.export(output_path, format="mp3", bitrate="192k")
                 print(f" Saved {clip_type} clip: {output_path}")
+
+                with open(output_path, "rb") as f:
+                    s3_url = upload_file_to_s3(f, filename, s3_folder)
+                
+                s3_filename = s3_url.split('/')[-1]
+                print(f"Uploaded {s3_filename} to S3 in {s3_folder}")
+
             except Exception as e:
-                print(f" Error saving audio file: {e}")
+                print(f" Error saving or uploading audio file: {e}")
                 return False
 
             if clip_type.lower() == "ad":
-
                 new_ad = Ad(
                     brand=brand_or_artist,
-                    advertisement=filename,
+                    advertisement=advertisement_or_name,
+                    filename=s3_filename,
                     duration=int(duration),
+                    upload_date=datetime.now(),
                     status="Active",
                 )
                 session.add(new_ad)
@@ -891,11 +901,10 @@ class EnhancedRadioRecordingManager:
                 session.add(detection_result)
 
             elif clip_type.lower() == "song":
-
                 new_song = Song(
                     artist=brand_or_artist,
                     name=advertisement_or_name,
-                    filename=filename,
+                    filename=s3_filename,
                     duration=int(duration),
                     upload_date=datetime.now(),
                     status="Active",
@@ -903,7 +912,7 @@ class EnhancedRadioRecordingManager:
                 session.add(new_song)
                 session.commit()
                 song_id = new_song.id
-                print(f" Added to songs table: {filename}")
+                print(f" Added to songs table: {s3_filename}")
                 song_detection_result = AdDetectionResult(
                     brand=brand_or_artist,
                     description=advertisement_or_name,
@@ -921,9 +930,10 @@ class EnhancedRadioRecordingManager:
                     clip_type="song",
                 )
                 session.add(song_detection_result)
+                print("Added song")
             session.commit()
 
-            elapsed = time.time() - start_time
+            elapsed = time.time() - start_time_perf
             logging.info(
                 f"extract_clip_from_broadcast completed in {elapsed:.2f} seconds"
             )
@@ -938,7 +948,7 @@ class EnhancedRadioRecordingManager:
         except Exception as e:
             session.rollback()
             print(f" Error extracting clip: {e}")
-            error_msg = f"extract_clip_from_broadcast failed after {time.time() - start_time:.2f} seconds: {str(e)}"
+            error_msg = f"extract_clip_from_broadcast failed after {time.time() - start_time_perf:.2f} seconds: {str(e)}"
             logging.error(error_msg)
             logging.error(traceback.format_exc())
             raise HTTPException(status_code=505, detail=str(e))
@@ -963,8 +973,8 @@ def get_first_file_path(folder_path: str) -> str | None:
 
 def process_single_radio_clip(
     broadcast_id,
+    broadcast_filename,
     ad_masters_folder="ad_masters",
-    radio_recording_directory="radio_recording",
     correlation_threshold=0.65,
     db_manager=None,
 ):
@@ -992,8 +1002,12 @@ def process_single_radio_clip(
         finally:
             session.close()
 
-        radio_file_path = get_first_file_path(radio_recording_directory)
-        print(f"\n Processing: {radio_file_path}")
+        local_broadcast_path = os.path.join("broadcasts", broadcast_filename)
+        if not os.path.exists(local_broadcast_path):
+            print(f"Broadcast clip {broadcast_filename} not found locally, downloading...")
+            download_file_from_s3(broadcast_filename, "broadcasts", "broadcasts")
+
+        print(f"\n Processing: {local_broadcast_path}")
         print("=" * 50)
 
         print(" Loading advertisement masters...")
@@ -1012,7 +1026,7 @@ def process_single_radio_clip(
         print(f" Loaded {len(masters)} advertisement masters")
 
         print(" Loading radio recording...")
-        radio_recording, radio_sr = load_audio(radio_file_path)
+        radio_recording, radio_sr = load_audio(local_broadcast_path)
         if radio_recording is None:
             print(f" Error: Could not load radio recording")
             db_manager.update_broadcast_status(broadcast_id, "Failed")
@@ -1043,7 +1057,7 @@ def process_single_radio_clip(
         print(f"Total raw matches found: {total_matches}")
 
         final_matches = db_manager.save_detection_results(
-            broadcast_id, all_matches, radio_file_path
+            broadcast_id, all_matches, local_broadcast_path
         )
 
         session = db_manager.Session()
@@ -1131,6 +1145,7 @@ def extract_clip(
     clip_type,
     start_time,
     end_time,
+    broadcast_filename
 ):
     db_manager = EnhancedRadioRecordingManager()
     return db_manager.extract_clip_from_broadcast(
@@ -1140,6 +1155,7 @@ def extract_clip(
         clip_type,
         start_time,
         end_time,
+        broadcast_filename
     )
 
 
